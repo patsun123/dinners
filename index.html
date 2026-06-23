@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GourmetLog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  :root {
+    --bg:#FAF5EC; --surface:#FFFFFF; --surface-soft:#FBF6EE; --surface-warm:#F2E9D9;
+    --ink:#221C17; --ink-soft:#4C4239; --muted:#8C8174;
+    --line:#ECE3D4; --line-strong:#DCCFBB;
+    --accent:#E0532F; --accent-deep:#BD3F1F; --accent-soft:#FBE8DF;
+    --positive:#3F8F5B; --positive-soft:#E7F1E7;
+    --font-display:"Spectral", Georgia, "Times New Roman", serif;
+    --font-sans:"Hanken Grotesk", system-ui, -apple-system, sans-serif;
+    --radius-xl:22px; --radius-lg:18px; --radius-md:12px; --radius-pill:999px;
+    --shadow-card:0 1px 2px rgba(70,48,20,0.05), 0 12px 30px rgba(96,64,26,0.07);
+    --shadow-soft:0 1px 2px rgba(70,48,20,0.04), 0 6px 16px rgba(96,64,26,0.05);
+  }
+  body { color:var(--ink); font-family:var(--font-sans); background:var(--bg); }
+  input::placeholder { color:var(--muted); }
+  button { font-family: var(--font-sans); }
+  @keyframes gl-fade { from { opacity:0; transform:translateY(6px);} to { opacity:1; transform:translateY(0);} }
+  @keyframes gl-spin { to { transform:rotate(360deg);} }
+  .gl-bg-dots { position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:radial-gradient(rgba(150,110,60,0.05) 1px, transparent 1.4px);
+    background-size:22px 22px;
+    -webkit-mask-image:radial-gradient(circle at 50% 14%, #000, transparent 72%);
+    mask-image:radial-gradient(circle at 50% 14%, #000, transparent 72%); opacity:0.7; }
+  .gl-bg-glow { position:fixed; inset:0 0 auto 0; height:420px; z-index:0; pointer-events:none;
+    background:radial-gradient(900px 360px at 50% -120px, rgba(255,255,255,0.9), transparent 70%); }
+  .gl-card-hover:hover { transform:translateY(-2px); box-shadow:var(--shadow-card); border-color:var(--line-strong); }
+  .gl-row-hover:hover { border-color:var(--line-strong); }
+  .gl-icon-btn:hover { color:var(--accent); border-color:var(--accent); }
+  .gl-icon-btn-del:hover { color:#C0392B; border-color:#C0392B; }
+  .gl-accent-btn:hover { background:var(--accent-deep); transform:translateY(-1px); }
+  .gl-cook-btn:hover { transform:translateY(-1px); background:#F8DCD0; }
+</style>
+</head>
+<body>
+<div class="gl-bg-dots"></div>
+<div class="gl-bg-glow"></div>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="./config.js"></script>
+<script src="./sheets.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

@@ -29,47 +29,36 @@
 
   async function signIn() {
     await waitForGis();
-    // Step 1: ID token (One Tap / button) → get verified email
-    const idPromise = new Promise((resolve, reject) => {
-      window.google.accounts.id.initialize({
-        client_id: cfg.GOOGLE_CLIENT_ID,
-        callback: (resp) => {
-          const claims = decodeJwt(resp.credential);
-          if (!claims) return reject(new Error("Bad ID token"));
-          const allowed = (cfg.ALLOWED_EMAILS || []).map(s => s.toLowerCase());
-          if (!allowed.includes(String(claims.email).toLowerCase())) {
-            return reject(new Error("This site is restricted. Signed in as " + claims.email + "."));
-          }
-          userEmail = claims.email;
-          resolve();
-        },
-        auto_select: false,
-        cancel_on_tap_outside: false,
-      });
-      window.google.accounts.id.renderButton(
-        document.getElementById("gl-signin-btn"),
-        { theme: "outline", size: "large", text: "signin_with", shape: "rectangular", width: 260 }
-      );
-      window.google.accounts.id.prompt();
-    });
-    await idPromise;
-
-    // Step 2: access token for Sheets API
+    // Single popup flow: request token with email scope, then verify via userinfo.
+    // This skips One Tap (unreliable) and goes straight to the account-picker popup.
     await new Promise((resolve, reject) => {
       tokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: cfg.GOOGLE_CLIENT_ID,
         scope: SCOPES,
-        hint: userEmail,
-        callback: (resp) => {
+        callback: async (resp) => {
           if (resp.error) return reject(new Error(resp.error));
           accessToken = resp.access_token;
-          // refresh ~5min before expiry
-          const expSec = resp.expires_in || 3600;
-          setTimeout(refreshToken, Math.max(60, expSec - 300) * 1000);
-          resolve();
+          // Verify email via userinfo
+          try {
+            const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+              headers: { Authorization: "Bearer " + accessToken },
+            });
+            const info = await r.json();
+            const allowed = (cfg.ALLOWED_EMAILS || []).map(s => s.toLowerCase());
+            if (!allowed.includes(String(info.email).toLowerCase())) {
+              accessToken = null;
+              return reject(new Error("This site is restricted. Signed in as " + info.email + "."));
+            }
+            userEmail = info.email;
+            const expSec = resp.expires_in || 3600;
+            setTimeout(refreshToken, Math.max(60, expSec - 300) * 1000);
+            resolve();
+          } catch (ex) {
+            reject(ex);
+          }
         },
       });
-      tokenClient.requestAccessToken({ prompt: "consent" });
+      tokenClient.requestAccessToken({ prompt: "select_account" });
     });
   }
 

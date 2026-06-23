@@ -79,8 +79,12 @@
       try { await GL_SHEETS.signIn(); onSignedIn(); }
       catch (ex) { setErr(ex.message || String(ex)); setBusy(false); }
     };
-    // Auto-launch the flow on first paint so the user clicks once and goes through GIS.
-    useEffect(() => { click(); /* eslint-disable-next-line */ }, []);
+    // Google SVG logo
+    const gLogo = e("svg", { width: 18, height: 18, viewBox: "0 0 18 18" },
+      e("path", { fill: "#4285F4", d: "M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" }),
+      e("path", { fill: "#34A853", d: "M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" }),
+      e("path", { fill: "#FBBC05", d: "M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" }),
+      e("path", { fill: "#EA4335", d: "M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58Z" }));
     return e("div", { style: { position: "relative", zIndex: 1, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 20px" } },
       e("div", { style: { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: "var(--radius-xl)", boxShadow: "var(--shadow-card)", padding: "36px 34px", width: "min(440px, 100%)", textAlign: "center" } },
         e("div", { style: { width: 64, height: 64, borderRadius: 18, background: "linear-gradient(150deg, #E9633F, var(--accent-deep))", boxShadow: "0 10px 22px rgba(189,63,31,0.30)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 18 } },
@@ -90,9 +94,9 @@
             e("path", { d: "M21 15V2a5 5 0 0 0-3 4.5V13a2 2 0 0 0 2 2h1Z" }),
             e("path", { d: "M19 15v7" }))),
         e("div", { style: { font: "700 1.55rem var(--font-display)", letterSpacing: "-0.01em", marginBottom: 6 } }, "GourmetLog"),
-        e("div", { style: { font: "400 0.92rem var(--font-sans)", color: "var(--muted)", marginBottom: 24 } }, "Sign in with Google to open the ledger."),
-        e("div", { id: "gl-signin-btn", style: { display: "inline-block" } }),
-        busy ? e("div", { style: { marginTop: 18, font: "400 0.85rem var(--font-sans)", color: "var(--muted)" } }, "Waiting for Google…") : null,
+        e("div", { style: { font: "400 0.92rem var(--font-sans)", color: "var(--muted)", marginBottom: 28 } }, "Sign in with Google to open the ledger."),
+        e("button", { onClick: click, disabled: busy, style: { display: "inline-flex", alignItems: "center", gap: 10, font: "600 0.94rem var(--font-sans)", color: "#3c4043", background: "#fff", border: "1px solid #dadce0", borderRadius: 8, padding: "11px 22px", cursor: busy ? "wait" : "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.08)", transition: "140ms ease", opacity: busy ? 0.7 : 1 } },
+          gLogo, busy ? "Opening Google…" : "Sign in with Google"),
         err ? e("div", { style: { marginTop: 18, font: "400 0.88rem var(--font-sans)", color: "#C0392B", background: "#FBE8E2", border: "1px solid #F1C9BB", borderRadius: 12, padding: "10px 12px", textAlign: "left" } }, err) : null));
   }
 

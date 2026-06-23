@@ -36,8 +36,9 @@
         callback: (resp) => {
           const claims = decodeJwt(resp.credential);
           if (!claims) return reject(new Error("Bad ID token"));
-          if (claims.email !== cfg.ALLOWED_EMAIL) {
-            return reject(new Error("This site is restricted to " + cfg.ALLOWED_EMAIL + ". Signed in as " + claims.email + "."));
+          const allowed = (cfg.ALLOWED_EMAILS || []).map(s => s.toLowerCase());
+          if (!allowed.includes(String(claims.email).toLowerCase())) {
+            return reject(new Error("This site is restricted. Signed in as " + claims.email + "."));
           }
           userEmail = claims.email;
           resolve();
@@ -58,7 +59,7 @@
       tokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: cfg.GOOGLE_CLIENT_ID,
         scope: SCOPES,
-        hint: cfg.ALLOWED_EMAIL,
+        hint: userEmail,
         callback: (resp) => {
           if (resp.error) return reject(new Error(resp.error));
           accessToken = resp.access_token;

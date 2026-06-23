@@ -7,5 +7,5 @@ window.GL_CONFIG = {
   GOOGLE_CLIENT_ID: "884374394943-jdbn677ddas6hi2r06b9ehs53isoi4tc.apps.googleusercontent.com",
   SPREADSHEET_ID: "1B1I4I0F5Bj-D8_IxkDYJQKDE0GqGjlZRs8fCJcYUGDo",
   SHEET_GID: 1639441645,
-  ALLOWED_EMAIL: "patrick.sun@gmail.com",
+  ALLOWED_EMAILS: ["patrick.sun@gmail.com", "smk0208@gmail.com"],
 };

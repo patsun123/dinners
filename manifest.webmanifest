@@ -1,0 +1,13 @@
+{
+  "name": "GourmetLog",
+  "short_name": "Dinners",
+  "description": "Recipe ledger and meal-metrics hub",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF5EC",
+  "theme_color": "#E0532F",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

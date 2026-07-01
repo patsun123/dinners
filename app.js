@@ -102,7 +102,8 @@
 
   // ---------- Main app ----------
   function App() {
-    const [signedIn, setSignedIn] = useState(false);
+    // Restore a still-valid token from this browser session (skips the popup on reload)
+    const [signedIn, setSignedIn] = useState(() => window.GL_SHEETS.restore());
     const [recipes, setRecipes] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -116,6 +117,7 @@
     const [copiedRow, setCopiedRow] = useState(null);
     const [modal, setModal] = useState(null); // 'add'|'edit'|'delete'
     const [editRow, setEditRow] = useState(null);
+    const [editName, setEditName] = useState(""); // name at time of open, for stale-row check
     const [delRow, setDelRow] = useState(null);
     const [delName, setDelName] = useState("");
     const [form, setForm] = useState({ name: "", cuisine: "Asian-inspired", url: "", cooked: "0" });
@@ -129,6 +131,29 @@
     }, []);
 
     useEffect(() => { if (signedIn) refresh(); }, [signedIn, refresh]);
+
+    // If token refresh fails mid-session, drop back to the sign-in screen
+    useEffect(() => {
+      window.GL_SHEETS.setOnAuthLost(() => setSignedIn(false));
+    }, []);
+
+    // Escape closes any open modal
+    useEffect(() => {
+      if (!modal) return;
+      const onKey = (ev) => { if (ev.key === "Escape") setModal(null); };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }, [modal]);
+
+    // Shared handler for write failures: stale row → reload the ledger
+    const handleMutErr = async (ex) => {
+      if (ex.stale) {
+        setError("The sheet changed since this page loaded — refreshed it for you. Please retry.");
+        await refresh();
+      } else {
+        setError(ex.message || String(ex));
+      }
+    };
 
     // Derived
     const filtered = useMemo(() => {
@@ -177,7 +202,7 @@
       // optimistic
       setRecipes(recipes.map(x => x.rowNumber === r.rowNumber ? { ...x, cooked: x.cooked + 1, type: "History" } : x));
       try { await GL_SHEETS.incrementCooked(r.rowNumber, r.cooked, r); }
-      catch (ex) { setError(ex.message); await refresh(); }
+      catch (ex) { await handleMutErr(ex); if (!ex.stale) await refresh(); }
       finally { setPendingRow(null); }
     };
     const openLink = (r) => {
@@ -200,7 +225,7 @@
       }, 650);
     };
     const openAdd = () => { setForm({ name: "", cuisine: "Asian-inspired", url: "", cooked: "0" }); setModal("add"); };
-    const openEdit = (r) => { setEditRow(r.rowNumber); setForm({ name: r.name, cuisine: r.cuisine, url: r.url || (r.linkLabel || ""), cooked: String(r.cooked) }); setModal("edit"); };
+    const openEdit = (r) => { setEditRow(r.rowNumber); setEditName(r.name); setForm({ name: r.name, cuisine: r.cuisine, url: r.url || (r.linkLabel || ""), cooked: String(r.cooked) }); setModal("edit"); };
     const openDelete = (r) => { setDelRow(r.rowNumber); setDelName(r.name); setModal("delete"); };
     const closeModal = () => setModal(null);
     const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -216,14 +241,14 @@
       const record = { name, cuisine: form.cuisine, cooked, url, linkLabel, type, searchOnly: !url && type === "Recommended" };
       try {
         if (modal === "add") await GL_SHEETS.appendRecipe(record);
-        else if (modal === "edit") await GL_SHEETS.updateRecipe(editRow, record);
+        else if (modal === "edit") await GL_SHEETS.updateRecipe(editRow, editName, record);
         setModal(null);
         await refresh();
-      } catch (ex) { setError(ex.message); }
+      } catch (ex) { if (ex.stale) setModal(null); await handleMutErr(ex); }
     };
     const confirmDelete = async () => {
-      try { await GL_SHEETS.deleteRecipe(delRow); setModal(null); await refresh(); }
-      catch (ex) { setError(ex.message); }
+      try { await GL_SHEETS.deleteRecipe(delRow, delName); setModal(null); await refresh(); }
+      catch (ex) { if (ex.stale) setModal(null); await handleMutErr(ex); }
     };
 
     if (!signedIn) return e(SignIn, { onSignedIn: () => setSignedIn(true) });
@@ -281,7 +306,7 @@
         e("span", { style: { font: "600 1.7rem/1.12 var(--font-display)", letterSpacing: "-0.01em" } }, spun.name),
         e("div", { style: { display: "flex", alignItems: "center", gap: 12, marginTop: 2, flexWrap: "wrap" } },
           e("span", { style: cookedStyle(spun.cooked) }, spun.cooked > 0 ? ("Cooked " + spun.cooked + "×") : "Not yet cooked"),
-          e("button", { className: "gl-cook-btn", onClick: () => cook(spun), style: { font: "600 0.78rem var(--font-sans)", color: "var(--accent-deep)", background: "var(--accent-soft)", border: "1px solid #F1C9BB", borderRadius: "var(--radius-md)", padding: "8px 13px", cursor: "pointer" } }, "+ Cooked it"),
+          e("button", { className: "gl-cook-btn", disabled: pendingRow === spun.rowNumber, onClick: () => cook(spun), style: { font: "600 0.78rem var(--font-sans)", color: "var(--accent-deep)", background: "var(--accent-soft)", border: "1px solid #F1C9BB", borderRadius: "var(--radius-md)", padding: "8px 13px", cursor: pendingRow === spun.rowNumber ? "wait" : "pointer", opacity: pendingRow === spun.rowNumber ? 0.6 : 1 } }, "+ Cooked it"),
           li.interactive ? e("button", { onClick: () => openLink(spun), style: { ...li.style, padding: "4px 2px" } }, li.text) : null));
     } else {
       spinnerBody = e("span", { style: { font: "400 0.92rem var(--font-sans)", color: "var(--muted)", textAlign: "center" } }, "Roll the dice to get a recipe idea from your active filters.");
@@ -302,7 +327,7 @@
         ctrl);
       modalBody = e(React.Fragment, null,
         e("div", { style: { font: "700 1.35rem var(--font-display)", letterSpacing: "-0.01em", marginBottom: 20 } }, modal === "add" ? "Add new recipe" : "Edit recipe"),
-        field("Name", e("input", { value: form.name, onChange: ev => setF("name", ev.target.value), placeholder: "Recipe name", style: inputStyle })),
+        field("Name", e("input", { value: form.name, autoFocus: true, onChange: ev => setF("name", ev.target.value), placeholder: "Recipe name", style: inputStyle })),
         field("Cuisine", e("select", { value: form.cuisine, onChange: ev => setF("cuisine", ev.target.value), style: inputStyle },
           ORDER.map(c => e("option", { key: c, value: c }, c)))),
         field("Recipe link (optional)", e("input", { value: form.url, onChange: ev => setF("url", ev.target.value), placeholder: "https://…", style: inputStyle })),
@@ -346,7 +371,9 @@
           svgPlus, "Add new recipe")),
 
       // Error banner
-      error ? e("div", { style: { marginBottom: 14, font: "400 0.88rem var(--font-sans)", color: "#8B2515", background: "#FBE8E2", border: "1px solid #F1C9BB", borderRadius: 12, padding: "10px 14px" } }, error) : null,
+      error ? e("div", { style: { marginBottom: 14, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, font: "400 0.88rem var(--font-sans)", color: "#8B2515", background: "#FBE8E2", border: "1px solid #F1C9BB", borderRadius: 12, padding: "10px 14px" } },
+        e("span", null, error),
+        e("button", { onClick: () => setError(null), title: "Dismiss", style: { flex: "none", background: "transparent", border: "none", color: "#8B2515", font: "700 1rem var(--font-sans)", cursor: "pointer", padding: "0 2px", lineHeight: 1 } }, "✕")) : null,
 
       // Loading banner (on initial load)
       loading && !recipes.length ? e("div", { style: { marginBottom: 14, font: "400 0.88rem var(--font-sans)", color: "var(--muted)", background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, padding: "10px 14px" } }, "Loading your ledger…") : null,

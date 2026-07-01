@@ -2,22 +2,15 @@
 (function () {
   const cfg = window.GL_CONFIG;
   const SCOPES = "https://www.googleapis.com/auth/spreadsheets openid email profile";
-  const ORDER = ["American/Comfort","Asian-inspired","Italian","Mediterranean/Middle Eastern","Mexican-inspired"];
+  const STORE_KEY = "gl.auth.v1";
 
   let tokenClient = null;
   let accessToken = null;
   let userEmail = null;
   let sheetName = null; // resolved from GID at first read
+  let onAuthLost = null; // app-registered callback: session expired, show sign-in
 
   // ----- Auth -----
-  function decodeJwt(jwt) {
-    try {
-      const b64 = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-      const pad = b64 + "===".slice((b64.length + 3) % 4);
-      return JSON.parse(decodeURIComponent(escape(atob(pad))));
-    } catch (e) { return null; }
-  }
-
   function waitForGis() {
     return new Promise((resolve) => {
       if (window.google && window.google.accounts) return resolve();
@@ -27,62 +20,95 @@
     });
   }
 
-  async function signIn() {
-    await waitForGis();
-    // Single popup flow: request token with email scope, then verify via userinfo.
-    // This skips One Tap (unreliable) and goes straight to the account-picker popup.
-    await new Promise((resolve, reject) => {
+  function ensureTokenClient() {
+    if (!tokenClient) {
       tokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: cfg.GOOGLE_CLIENT_ID,
         scope: SCOPES,
-        callback: async (resp) => {
-          if (resp.error) return reject(new Error(resp.error));
-          accessToken = resp.access_token;
-          // Verify email via userinfo
-          try {
-            const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-              headers: { Authorization: "Bearer " + accessToken },
-            });
-            const info = await r.json();
-            const allowed = (cfg.ALLOWED_EMAILS || []).map(s => s.toLowerCase());
-            if (!allowed.includes(String(info.email).toLowerCase())) {
-              accessToken = null;
-              return reject(new Error("This site is restricted. Signed in as " + info.email + "."));
-            }
-            userEmail = info.email;
-            const expSec = resp.expires_in || 3600;
-            setTimeout(refreshToken, Math.max(60, expSec - 300) * 1000);
-            resolve();
-          } catch (ex) {
-            reject(ex);
-          }
-        },
+        callback: () => {},
       });
-      tokenClient.requestAccessToken({ prompt: "select_account" });
+    }
+    return tokenClient;
+  }
+
+  // One in-flight token request at a time; GIS delivers via the mutable callback.
+  function requestToken(promptMode) {
+    return new Promise((resolve, reject) => {
+      const tc = ensureTokenClient();
+      tc.callback = (resp) => resp && resp.access_token ? resolve(resp) : reject(new Error((resp && resp.error) || "Token request failed"));
+      tc.error_callback = (err) => reject(new Error((err && err.type) || "Popup closed"));
+      try { tc.requestAccessToken({ prompt: promptMode, hint: userEmail || undefined }); }
+      catch (ex) { reject(ex); }
     });
   }
 
-  function refreshToken() {
-    if (!tokenClient) return;
-    tokenClient.callback = (resp) => {
-      if (resp.access_token) {
-        accessToken = resp.access_token;
-        const expSec = resp.expires_in || 3600;
-        setTimeout(refreshToken, Math.max(60, expSec - 300) * 1000);
-      }
-    };
-    tokenClient.requestAccessToken({ prompt: "" });
+  function persist(resp) {
+    accessToken = resp.access_token;
+    const exp = Date.now() + ((resp.expires_in || 3600) * 1000);
+    try { sessionStorage.setItem(STORE_KEY, JSON.stringify({ t: accessToken, e: exp, u: userEmail })); } catch (ex) {}
+  }
+
+  function clearAuth() {
+    accessToken = null;
+    try { sessionStorage.removeItem(STORE_KEY); } catch (ex) {}
+  }
+
+  function authLost() {
+    clearAuth();
+    if (onAuthLost) onAuthLost();
+  }
+
+  // Returns true if a still-valid token was restored from this browser session.
+  function restore() {
+    try {
+      const raw = sessionStorage.getItem(STORE_KEY);
+      if (!raw) return false;
+      const s = JSON.parse(raw);
+      if (!s.t || !s.u || Date.now() > s.e - 60000) return false;
+      accessToken = s.t;
+      userEmail = s.u;
+      return true;
+    } catch (ex) { return false; }
+  }
+
+  async function signIn() {
+    await waitForGis();
+    const resp = await requestToken("select_account");
+    accessToken = resp.access_token;
+    const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: { Authorization: "Bearer " + accessToken },
+    });
+    const info = await r.json();
+    const allowed = (cfg.ALLOWED_EMAILS || []).map(s => s.toLowerCase());
+    if (!allowed.includes(String(info.email).toLowerCase())) {
+      clearAuth();
+      throw new Error("This site is restricted. Signed in as " + info.email + ".");
+    }
+    userEmail = info.email;
+    persist(resp);
   }
 
   function getEmail() { return userEmail; }
 
   // ----- Sheets API -----
-  async function sapi(path, opts) {
+  async function sapi(path, opts, retried) {
     opts = opts || {};
     const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets/" + cfg.SPREADSHEET_ID + path, {
       ...opts,
       headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json", ...(opts.headers || {}) },
     });
+    if (r.status === 401 && !retried) {
+      // Token expired: try a silent refresh once, then replay the request.
+      try {
+        await waitForGis();
+        const resp = await requestToken("");
+        persist(resp);
+        return sapi(path, opts, true);
+      } catch (ex) {
+        authLost();
+        throw new Error("Session expired — please sign in again.");
+      }
+    }
     if (!r.ok) {
       const t = await r.text();
       throw new Error("Sheets API " + r.status + ": " + t);
@@ -103,6 +129,20 @@
     // Sheet names with non-word chars need single-quote wrapping; quotes inside escaped by doubling
     if (/^[A-Za-z0-9_]+$/.test(name)) return name;
     return "'" + name.replace(/'/g, "''") + "'";
+  }
+
+  // Guard against stale row numbers: rows shift when someone else deletes or
+  // inserts. Before any write we confirm the target row still holds the same
+  // recipe name; if not, throw with .stale=true so the UI can refresh.
+  async function assertRowName(rowNumber, expectedName) {
+    const name = await ensureSheetName();
+    const j = await sapi("/values/" + encodeURIComponent(escapeRange(name) + "!B" + rowNumber));
+    const cell = (((j.values || [])[0] || [])[0] || "");
+    if (cell.trim().toLowerCase() !== String(expectedName).trim().toLowerCase()) {
+      const err = new Error("The sheet changed since this page loaded.");
+      err.stale = true;
+      throw err;
+    }
   }
 
   function parseCookedCell(v) {
@@ -163,7 +203,8 @@
     });
   }
 
-  async function updateRecipe(rowNumber, r) {
+  async function updateRecipe(rowNumber, expectedName, r) {
+    await assertRowName(rowNumber, expectedName);
     const name = await ensureSheetName();
     const range = escapeRange(name) + "!A" + rowNumber + ":E" + rowNumber;
     return sapi("/values/" + encodeURIComponent(range) + "?valueInputOption=USER_ENTERED", {
@@ -172,9 +213,9 @@
     });
   }
 
-  async function deleteRecipe(rowNumber) {
+  async function deleteRecipe(rowNumber, expectedName) {
+    await assertRowName(rowNumber, expectedName);
     // batchUpdate uses 0-indexed row positions
-    await ensureSheetName();
     return sapi(":batchUpdate", {
       method: "POST",
       body: JSON.stringify({
@@ -194,13 +235,14 @@
 
   async function incrementCooked(rowNumber, currentCooked, currentRecipe) {
     const next = { ...currentRecipe, cooked: currentCooked + 1, type: "History" };
-    return updateRecipe(rowNumber, next);
+    return updateRecipe(rowNumber, currentRecipe.name, next);
   }
 
   window.GL_SHEETS = {
-    ORDER,
     signIn,
+    restore,
     getEmail,
+    setOnAuthLost: (fn) => { onAuthLost = fn; },
     listRecipes,
     appendRecipe,
     updateRecipe,

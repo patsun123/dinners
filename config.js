@@ -8,4 +8,6 @@ window.GL_CONFIG = {
   SPREADSHEET_ID: "1B1I4I0F5Bj-D8_IxkDYJQKDE0GqGjlZRs8fCJcYUGDo",
   SHEET_GID: 1639441645,
   ALLOWED_EMAILS: ["patrick.sun@gmail.com", "smk0208@gmail.com"],
+  MEAL_CALENDAR_ID: "vhmnk95esn2fusmj49nvpu10rk@group.calendar.google.com",
+  COOK_LOG_SHEET: "Cook Log",
 };

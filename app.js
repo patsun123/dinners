@@ -64,6 +64,9 @@
     e("path", { d: "M3 6h18" }),
     e("path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }),
     e("path", { d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" }));
+  const svgCalPlus = e("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" },
+    e("rect", { x: 3, y: 4, width: 18, height: 17, rx: 2 }),
+    e("path", { d: "M16 2v4M8 2v4M3 10h18M12 13.5v5M9.5 16h5" }));
   const svgUtensils = e("svg", { width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "#fff", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" },
     e("path", { d: "M3 2v7c0 1.1.9 2 2 2a2 2 0 0 0 2-2V2" }),
     e("path", { d: "M5 2v20" }),
@@ -122,6 +125,11 @@
     const [delName, setDelName] = useState("");
     const [form, setForm] = useState({ name: "", cuisine: "Asian-inspired", url: "", cooked: "0" });
     const [pendingRow, setPendingRow] = useState(null); // row currently being mutated
+    const [week, setWeek] = useState([]); // upcoming Meal Planning events
+    const [weekErr, setWeekErr] = useState(null);
+    const [planName, setPlanName] = useState("");
+    const [planDate, setPlanDate] = useState("");
+    const [planBusy, setPlanBusy] = useState(false);
 
     const refresh = useCallback(async () => {
       setLoading(true); setError(null);
@@ -130,7 +138,12 @@
       finally { setLoading(false); }
     }, []);
 
-    useEffect(() => { if (signedIn) refresh(); }, [signedIn, refresh]);
+    const loadWeek = useCallback(async () => {
+      try { setWeek(await GL_SHEETS.listWeekMeals()); setWeekErr(null); }
+      catch (ex) { setWeekErr(ex.message || String(ex)); }
+    }, []);
+
+    useEffect(() => { if (signedIn) { refresh(); loadWeek(); } }, [signedIn, refresh, loadWeek]);
 
     // If token refresh fails mid-session, drop back to the sign-in screen
     useEffect(() => {
@@ -225,6 +238,37 @@
       }, 650);
     };
     const openAdd = () => { setForm({ name: "", cuisine: "Asian-inspired", url: "", cooked: "0" }); setModal("add"); };
+    const openAddPrefill = (name) => { setForm({ name, cuisine: "Asian-inspired", url: "", cooked: "0" }); setModal("add"); };
+    const todayStr = () => {
+      const t = new Date();
+      return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+    };
+    const openPlan = (name) => { setPlanName(name); setPlanDate(todayStr()); setModal("plan"); };
+    const savePlan = async () => {
+      if (!planDate) return;
+      setPlanBusy(true);
+      try { await GL_SHEETS.planMeal(planName, planDate); setModal(null); await loadWeek(); }
+      catch (ex) { setError(ex.message || String(ex)); }
+      finally { setPlanBusy(false); }
+    };
+
+    // Fuzzy-match a calendar event title to a ledger recipe
+    const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const matchRecipe = (title) => {
+      const t = norm(title);
+      if (!t) return null;
+      let m = recipes.find(r => norm(r.name) === t);
+      if (m) return m;
+      m = recipes.find(r => norm(r.name).includes(t) || t.includes(norm(r.name)));
+      if (m) return m;
+      const tt = t.split(" ").filter(w => w.length > 2);
+      return recipes.find(r => {
+        const rt = norm(r.name).split(" ").filter(w => w.length > 2);
+        const overlap = rt.filter(w => tt.includes(w)).length;
+        const shorter = Math.min(rt.length, tt.length);
+        return shorter > 0 && overlap >= 2 && overlap >= shorter - 1;
+      }) || null;
+    };
     const openEdit = (r) => { setEditRow(r.rowNumber); setEditName(r.name); setForm({ name: r.name, cuisine: r.cuisine, url: r.url || (r.linkLabel || ""), cooked: String(r.cooked) }); setModal("edit"); };
     const openDelete = (r) => { setDelRow(r.rowNumber); setDelName(r.name); setModal("delete"); };
     const closeModal = () => setModal(null);
@@ -267,6 +311,7 @@
         e("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" } },
           e("span", { style: pillStyle(r.cuisine) }, r.cuisine),
           e("div", { style: { display: "flex", gap: "6px" } },
+            e("button", { className: "gl-icon-btn", title: "Plan this dinner", onClick: () => openPlan(r.name), style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--line)", borderRadius: 8, color: "var(--muted)", cursor: "pointer", transition: "140ms ease", padding: 0 } }, svgCalPlus),
             e("button", { className: "gl-icon-btn", title: "Edit", onClick: () => openEdit(r), style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--line)", borderRadius: 8, color: "var(--muted)", cursor: "pointer", transition: "140ms ease", padding: 0 } }, svgEdit),
             e("button", { className: "gl-icon-btn-del", title: "Delete", onClick: () => openDelete(r), style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--line)", borderRadius: 8, color: "var(--muted)", cursor: "pointer", transition: "140ms ease", padding: 0 } }, svgTrash))),
         e("span", { style: { font: "600 1.18rem/1.22 var(--font-display)", letterSpacing: "-0.005em", minHeight: "2.7em", display: "flex", alignItems: "flex-start" } }, r.name),
@@ -286,6 +331,7 @@
         e("button", { className: "gl-cook-btn", disabled: pendingRow === r.rowNumber, onClick: () => cook(r), style: { display: "inline-flex", alignItems: "center", gap: "6px", font: "600 0.78rem var(--font-sans)", color: "var(--accent-deep)", background: "var(--accent-soft)", border: "1px solid #F1C9BB", borderRadius: "var(--radius-md)", padding: "7px 12px", cursor: pendingRow === r.rowNumber ? "wait" : "pointer", transition: "140ms ease", whiteSpace: "nowrap", opacity: pendingRow === r.rowNumber ? 0.6 : 1 } }, "+ Cooked it"),
         e("button", { onClick: li.interactive ? () => openLink(r) : undefined, style: li.style, disabled: !li.interactive }, li.text),
         e("div", { style: { display: "flex", gap: 6 } },
+          e("button", { className: "gl-icon-btn", title: "Plan this dinner", onClick: () => openPlan(r.name), style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--line)", borderRadius: 8, color: "var(--muted)", cursor: "pointer", padding: 0, transition: "140ms ease" } }, svgCalPlus),
           e("button", { className: "gl-icon-btn", title: "Edit", onClick: () => openEdit(r), style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--line)", borderRadius: 8, color: "var(--muted)", cursor: "pointer", padding: 0, transition: "140ms ease" } }, svgEdit),
           e("button", { className: "gl-icon-btn-del", title: "Delete", onClick: () => openDelete(r), style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--line)", borderRadius: 8, color: "var(--muted)", cursor: "pointer", padding: 0, transition: "140ms ease" } }, svgTrash)));
     };
@@ -307,6 +353,7 @@
         e("div", { style: { display: "flex", alignItems: "center", gap: 12, marginTop: 2, flexWrap: "wrap" } },
           e("span", { style: cookedStyle(spun.cooked) }, spun.cooked > 0 ? ("Cooked " + spun.cooked + "×") : "Not yet cooked"),
           e("button", { className: "gl-cook-btn", disabled: pendingRow === spun.rowNumber, onClick: () => cook(spun), style: { font: "600 0.78rem var(--font-sans)", color: "var(--accent-deep)", background: "var(--accent-soft)", border: "1px solid #F1C9BB", borderRadius: "var(--radius-md)", padding: "8px 13px", cursor: pendingRow === spun.rowNumber ? "wait" : "pointer", opacity: pendingRow === spun.rowNumber ? 0.6 : 1 } }, "+ Cooked it"),
+          e("button", { onClick: () => openPlan(spun.name), style: { display: "inline-flex", alignItems: "center", gap: 6, font: "600 0.78rem var(--font-sans)", color: "var(--ink-soft)", background: "var(--surface)", border: "1px solid var(--line-strong)", borderRadius: "var(--radius-md)", padding: "8px 13px", cursor: "pointer" } }, svgCalPlus, "Plan it"),
           li.interactive ? e("button", { onClick: () => openLink(spun), style: { ...li.style, padding: "4px 2px" } }, li.text) : null));
     } else {
       spinnerBody = e("span", { style: { font: "400 0.92rem var(--font-sans)", color: "var(--muted)", textAlign: "center" } }, "Roll the dice to get a recipe idea from your active filters.");
@@ -314,7 +361,17 @@
 
     // ---------- Modal body ----------
     let modalBody = null;
-    if (modal === "delete") {
+    if (modal === "plan") {
+      modalBody = e(React.Fragment, null,
+        e("div", { style: { font: "700 1.35rem var(--font-display)", letterSpacing: "-0.01em", marginBottom: 8 } }, "Plan a dinner"),
+        e("div", { style: { font: "400 0.94rem/1.5 var(--font-sans)", color: "var(--ink-soft)", marginBottom: 18 } }, "Add “" + planName + "” to the Meal Planning calendar."),
+        e("div", { style: { display: "flex", flexDirection: "column", gap: 7, marginBottom: 22 } },
+          e("span", { style: { font: "600 0.64rem var(--font-sans)", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)" } }, "Date"),
+          e("input", { type: "date", value: planDate, min: todayStr(), autoFocus: true, onChange: ev => setPlanDate(ev.target.value), style: inputStyle })),
+        e("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
+          e("button", { onClick: closeModal, style: ghostBtn }, "Cancel"),
+          e("button", { onClick: savePlan, disabled: planBusy, style: { font: "600 0.86rem var(--font-sans)", color: "#fff", background: "var(--accent)", border: "none", borderRadius: "var(--radius-md)", padding: "11px 18px", cursor: planBusy ? "wait" : "pointer", boxShadow: "0 6px 14px rgba(224,83,47,0.22)", opacity: planBusy ? 0.7 : 1 } }, planBusy ? "Adding…" : "Add to calendar")));
+    } else if (modal === "delete") {
       modalBody = e(React.Fragment, null,
         e("div", { style: { font: "700 1.35rem var(--font-display)", letterSpacing: "-0.01em", marginBottom: 8 } }, "Remove recipe"),
         e("div", { style: { font: "400 0.94rem/1.5 var(--font-sans)", color: "var(--ink-soft)", marginBottom: 22 } }, "Delete “" + delName + "” from your ledger. This cannot be undone."),
@@ -384,6 +441,36 @@
         metric("Times cooked", timesCooked, "Accumulated cook history", "var(--accent)"),
         metric("To try", toTry, "Awaiting a first cook"),
         metric("Top cuisine", topCuisine, "Most frequent category")),
+
+      // This week (Meal Planning calendar)
+      e("div", { style: { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: "var(--radius-xl)", boxShadow: "var(--shadow-card)", overflow: "hidden", marginBottom: 20 } },
+        e("div", { style: { display: "flex", flexDirection: "column", gap: 3, padding: "20px 20px 0" } },
+          e("span", { style: { font: "600 1.18rem var(--font-display)", letterSpacing: "-0.01em" } }, "This week"),
+          e("span", { style: { font: "400 0.85rem var(--font-sans)", color: "var(--muted)" } }, "From your Meal Planning calendar.")),
+        e("div", { style: { padding: "16px 20px 20px" } },
+          weekErr
+            ? e("div", { style: { font: "400 0.88rem var(--font-sans)", color: "var(--muted)" } }, "Couldn't load the calendar: " + weekErr)
+            : week.length === 0
+              ? e("div", { style: { font: "400 0.92rem var(--font-sans)", color: "var(--muted)" } }, "Nothing planned yet this week — roll the dice and plan something.")
+              : e("div", { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
+                  week.map(ev => {
+                    const isToday = ev.date === todayStr();
+                    const m = matchRecipe(ev.title);
+                    const d = new Date(ev.date + "T00:00:00");
+                    const dayLabel = isToday ? "Tonight" : d.toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+                    const li = m ? linkInfo(m) : null;
+                    return e("div", { key: ev.id, style: { flex: "1 1 200px", minWidth: 200, display: "flex", flexDirection: "column", gap: 9, background: isToday ? "var(--accent-soft)" : "var(--surface-soft)", border: "1px solid " + (isToday ? "#F1C9BB" : "var(--line)"), borderRadius: "var(--radius-lg)", padding: "14px 15px" } },
+                      e("span", { style: { font: "600 0.62rem var(--font-sans)", textTransform: "uppercase", letterSpacing: "0.1em", color: isToday ? "var(--accent-deep)" : "var(--muted)" } }, dayLabel),
+                      e("span", { style: { font: "600 1.05rem/1.2 var(--font-display)", letterSpacing: "-0.005em" } }, ev.title),
+                      m
+                        ? e("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                            e("span", { style: pillStyle(m.cuisine) }, m.cuisine),
+                            e("button", { className: "gl-cook-btn", disabled: pendingRow === m.rowNumber, onClick: () => cook(m), style: { font: "600 0.74rem var(--font-sans)", color: "var(--accent-deep)", background: "var(--surface)", border: "1px solid #F1C9BB", borderRadius: "var(--radius-md)", padding: "6px 10px", cursor: pendingRow === m.rowNumber ? "wait" : "pointer", transition: "140ms ease", whiteSpace: "nowrap", opacity: pendingRow === m.rowNumber ? 0.6 : 1 } }, "+ Cooked it"),
+                            li && li.interactive ? e("button", { onClick: () => openLink(m), style: li.style }, li.text) : null)
+                        : e("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                            e("span", { style: { font: "400 0.76rem var(--font-sans)", color: "var(--muted)" } }, "Not in ledger"),
+                            e("button", { onClick: () => openAddPrefill(ev.title), style: { font: "600 0.76rem var(--font-sans)", color: "var(--accent-deep)", background: "transparent", border: "none", cursor: "pointer", padding: "2px 0", whiteSpace: "nowrap" } }, "Add to ledger")));
+                  })))),
 
       // Spinner + Coverage
       e("div", { style: { display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 20 } },

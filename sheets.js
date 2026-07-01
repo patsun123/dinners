@@ -1,8 +1,8 @@
 // Google OAuth + Sheets API client. Single global: window.GL_SHEETS.
 (function () {
   const cfg = window.GL_CONFIG;
-  const SCOPES = "https://www.googleapis.com/auth/spreadsheets openid email profile";
-  const STORE_KEY = "gl.auth.v1";
+  const SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.events openid email profile";
+  const STORE_KEY = "gl.auth.v2"; // v2: added calendar scope — old tokens must not be restored
 
   let tokenClient = null;
   let accessToken = null;
@@ -90,10 +90,10 @@
 
   function getEmail() { return userEmail; }
 
-  // ----- Sheets API -----
-  async function sapi(path, opts, retried) {
+  // ----- Authenticated fetch (shared by Sheets + Calendar) -----
+  async function authFetch(url, opts, retried) {
     opts = opts || {};
-    const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets/" + cfg.SPREADSHEET_ID + path, {
+    const r = await fetch(url, {
       ...opts,
       headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json", ...(opts.headers || {}) },
     });
@@ -103,7 +103,7 @@
         await waitForGis();
         const resp = await requestToken("");
         persist(resp);
-        return sapi(path, opts, true);
+        return authFetch(url, opts, true);
       } catch (ex) {
         authLost();
         throw new Error("Session expired — please sign in again.");
@@ -111,9 +111,17 @@
     }
     if (!r.ok) {
       const t = await r.text();
-      throw new Error("Sheets API " + r.status + ": " + t);
+      throw new Error("Google API " + r.status + ": " + t);
     }
     return r.json();
+  }
+
+  function sapi(path, opts) {
+    return authFetch("https://sheets.googleapis.com/v4/spreadsheets/" + cfg.SPREADSHEET_ID + path, opts);
+  }
+
+  function capi(path, opts) {
+    return authFetch("https://www.googleapis.com/calendar/v3" + path, opts);
   }
 
   async function ensureSheetName() {
@@ -235,7 +243,78 @@
 
   async function incrementCooked(rowNumber, currentCooked, currentRecipe) {
     const next = { ...currentRecipe, cooked: currentCooked + 1, type: "History" };
-    return updateRecipe(rowNumber, currentRecipe.name, next);
+    await updateRecipe(rowNumber, currentRecipe.name, next);
+    await appendCookLog(currentRecipe.name, currentRecipe.cuisine);
+  }
+
+  // ----- Cook log (second tab in the same spreadsheet) -----
+  function fmtDate(t) {
+    return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+  }
+
+  let logSheetOk = false;
+  async function ensureLogSheet() {
+    if (logSheetOk) return;
+    const meta = await sapi("?fields=sheets(properties(sheetId,title))");
+    if (!meta.sheets.some(s => s.properties.title === cfg.COOK_LOG_SHEET)) {
+      await sapi(":batchUpdate", {
+        method: "POST",
+        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: cfg.COOK_LOG_SHEET } } }] }),
+      });
+      await sapi("/values/" + encodeURIComponent(escapeRange(cfg.COOK_LOG_SHEET) + "!A1:C1") + "?valueInputOption=USER_ENTERED", {
+        method: "PUT",
+        body: JSON.stringify({ values: [["Date", "Meal", "Cuisine"]] }),
+      });
+    }
+    logSheetOk = true;
+  }
+
+  async function appendCookLog(name, cuisine) {
+    // Best-effort: a failed log entry must never block the cook counter.
+    try {
+      await ensureLogSheet();
+      await sapi("/values/" + encodeURIComponent(escapeRange(cfg.COOK_LOG_SHEET) + "!A:C") +
+        ":append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS", {
+        method: "POST",
+        body: JSON.stringify({ values: [[fmtDate(new Date()), name, cuisine]] }),
+      });
+    } catch (ex) {}
+  }
+
+  // ----- Meal Planning calendar -----
+  async function listWeekMeals() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // local midnight
+    const end = new Date(start.getTime() + 8 * 86400000);
+    const params = new URLSearchParams({
+      timeMin: start.toISOString(),
+      timeMax: end.toISOString(),
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "50",
+    });
+    const j = await capi("/calendars/" + encodeURIComponent(cfg.MEAL_CALENDAR_ID) + "/events?" + params);
+    return (j.items || [])
+      .filter(ev => ev.status !== "cancelled")
+      .map(ev => ({
+        id: ev.id,
+        title: ev.summary || "(untitled)",
+        date: (ev.start && (ev.start.date || (ev.start.dateTime || "").slice(0, 10))) || "",
+      }));
+  }
+
+  async function planMeal(name, dateStr) {
+    const next = new Date(dateStr + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    return capi("/calendars/" + encodeURIComponent(cfg.MEAL_CALENDAR_ID) + "/events", {
+      method: "POST",
+      body: JSON.stringify({
+        summary: name,
+        start: { date: dateStr },
+        end: { date: fmtDate(next) },
+        transparency: "transparent",
+      }),
+    });
   }
 
   window.GL_SHEETS = {
@@ -248,5 +327,7 @@
     updateRecipe,
     deleteRecipe,
     incrementCooked,
+    listWeekMeals,
+    planMeal,
   };
 })();
